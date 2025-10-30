@@ -12,10 +12,11 @@ enum TrafficType { VIDEO=1, DATACENTER=2, GAMING=3, IOT=4 };
 
 // Message kinds
 enum { DATA_PKT=10, ROUTE_REQUEST=20, ROUTE_REPLY=21, LINK_FAILURE=30,
-       DNS_QUERY=40, DNS_RESPONSE=41, HTTP_GET=50, HTTP_RESPONSE=51 };
+       DNS_QUERY=40, DNS_RESPONSE=41, HTTP_GET=50, HTTP_RESPONSE=51,
+       FAILURE_EVENT=60, RECOVERY_EVENT=61, METRICS_REPORT=70 };
 
 // Routing algorithms
-enum RoutingAlgo { ASTAR=1, DIJKSTRA=2, BELLMAN_FORD=3, LOAD_BALANCE=4 };
+enum RoutingAlgo { ASTAR=1, DIJKSTRA=2, BELLMAN_FORD=3, LOAD_BALANCE=4, KSHORT=5 };
 
 // QoS parameters structure
 struct QoSParams {
@@ -26,7 +27,20 @@ struct QoSParams {
     int ttl; // hop limit for packets
 };
 
-// Create message - same pattern as your mk() function
+// Performance metrics structure
+struct PacketMetrics {
+    int packetId;
+    long src;
+    long dst;
+    simtime_t sendTime;
+    simtime_t receiveTime;
+    int hopCount;
+    TrafficType type;
+    int priority;
+    RoutingAlgo algo;
+};
+
+
 static cMessage* mkData(const char* name, long src, long dst, const QoSParams& qos) {
     auto *m = new cMessage(name, DATA_PKT);
     m->addPar("src").setLongValue(src);
@@ -35,6 +49,8 @@ static cMessage* mkData(const char* name, long src, long dst, const QoSParams& q
     m->addPar("priority").setLongValue(qos.priority);
     m->addPar("bandwidth").setDoubleValue(qos.bandwidth);
     m->addPar("ttl").setLongValue(qos.ttl);
+    m->addPar("sendTime").setDoubleValue(simTime().dbl());
+    m->addPar("hopCount").setLongValue(0);
     return m;
 }
 

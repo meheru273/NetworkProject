@@ -10,6 +10,9 @@ simple RouteController
 {
     parameters:
         int numNodes = default(10);
+        double failureStartTime @unit(s) = default(8s);
+        double failureInterval @unit(s) = default(10s);
+        double recoveryTime @unit(s) = default(5s);
         @display("i=block/control");
     gates:
         inout ppp;

@@ -9,12 +9,20 @@ class SDNNode : public cSimpleModule {
 private:
     int addr;
     map<int, int> routes; // dst -> gate
-    // seen packets (src, seqno) to avoid flooding duplicates
     std::unordered_set<uint64_t> seen;
+    
+    //  Performance Metrics
+    int packetsForwarded;
+    int packetsReceived;
+    int packetsDropped;
+    map<TrafficType, int> trafficTypeCount;
 
 protected:
     void initialize() override {
         addr = par("address");
+        packetsForwarded = 0;
+        packetsReceived = 0;
+        packetsDropped = 0;
     }
 
     void handleMessage(cMessage *msg) override {
@@ -23,13 +31,23 @@ protected:
             if (msg->hasPar("ttl")) {
                 long ttl = msg->par("ttl").longValue();
                 if (ttl <= 0) {
-                    EV_INFO << "Node " << addr << " dropping packet from " << SRC(msg) << " due to ttl=0\n";
+                    EV_INFO << "Node " << addr << " dropping packet from " << SRC(msg) 
+                            << " due to ttl=0\n";
+                    packetsDropped++;
                     delete msg;
                     return;
                 }
                 msg->par("ttl").setLongValue(ttl - 1);
             }
+            
+            // Increment hop count
+            if (msg->hasPar("hopCount")) {
+                long hops = msg->par("hopCount").longValue();
+                msg->par("hopCount").setLongValue(hops + 1);
+            }
+            
             int dst = DST(msg);
+            
             // duplicate suppression: if packet has seqno, drop if already seen
             long seq = -1;
             if (msg->hasPar("seqno")) seq = msg->par("seqno").longValue();
@@ -39,7 +57,9 @@ protected:
                 uint64_t src = (uint64_t)(uint32_t)SRC(msg);
                 key = (src << 32) | s;
                 if (seen.find(key) != seen.end()) {
-                    EV_INFO << "Node " << addr << " dropping duplicate packet from " << SRC(msg) << " seq=" << seq << "\n";
+                    EV_INFO << "Node " << addr << " dropping duplicate packet from " 
+                            << SRC(msg) << " seq=" << seq << "\n";
+                    packetsDropped++;
                     delete msg;
                     return;
                 }
@@ -48,9 +68,30 @@ protected:
             
             // If this is destination
             if (dst == addr) {
-                EV_INFO << "Node " << addr << " received packet from " 
-                        << SRC(msg) << " Type=" << TYPE(msg) 
-                        << " Pri=" << PRIORITY(msg) << "\n";
+                packetsReceived++;
+                trafficTypeCount[TYPE(msg)]++;
+                
+                // FEATURE 2: Calculate end-to-end delay
+                if (msg->hasPar("sendTime")) {
+                    double sendTime = msg->par("sendTime").doubleValue();
+                    double delay = simTime().dbl() - sendTime;
+                    int hops = msg->hasPar("hopCount") ? msg->par("hopCount").longValue() : 0;
+                    
+                    const char* trafficName = (TYPE(msg)==VIDEO?"Video":
+                                              TYPE(msg)==DATACENTER?"Datacenter":
+                                              TYPE(msg)==GAMING?"Gaming":"IoT");
+                    
+                    EV_INFO << "Node " << addr << " RECEIVED packet from " << SRC(msg)
+                            << " Type=" << trafficName
+                            << " Pri=" << PRIORITY(msg) 
+                            << " Delay=" << delay << "s"
+                            << " Hops=" << hops << "\n";
+                    
+                    // Record statistics
+                    recordScalar("endToEndDelay", delay);
+                    recordScalar("hopCount", hops);
+                }
+                
                 delete msg;
                 return;
             }
@@ -84,24 +125,65 @@ protected:
                             if (peer->hasPar("address"))
                                 peerAddr = peer->par("address").intValue();
                             if (peerAddr == nextHop) {
+                                packetsForwarded++;
                                 send(msg, "port$o", g);
                                 return;
                             }
                         }
                     }
+                    
+                    // If we couldn't find the gate, drop packet
+                    EV_WARN << "Node " << addr << " could not find gate to next hop " 
+                            << nextHop << " - DROPPING\n";
+                    packetsDropped++;
+                    delete msg;
+                    return;
                 }
             }
             
             // Fallback: flood (skip incoming)
             EV_INFO << "Node " << addr << " flooding packet to " << dst << "\n";
             int inIdx = msg->getArrivalGate()->getIndex();
+            bool sentAny = false;
             for (int i = 0; i < gateSize("port"); i++) {
-                if (i != inIdx) send(msg->dup(), "port$o", i);
+                if (i != inIdx && gate("port$o", i)->isConnected()) {
+                    send(msg->dup(), "port$o", i);
+                    sentAny = true;
+                }
+            }
+            
+            if (sentAny) {
+                packetsForwarded++;
+            } else {
+                packetsDropped++;
             }
             delete msg;
+            
         } else {
             delete msg;
         }
+    }
+
+    //  Report node statistics
+    void finish() override {
+        EV_INFO << "\n--- Node " << addr << " Statistics ---\n";
+        EV_INFO << "Packets Received (as destination): " << packetsReceived << "\n";
+        EV_INFO << "Packets Forwarded: " << packetsForwarded << "\n";
+        EV_INFO << "Packets Dropped: " << packetsDropped << "\n";
+        
+        if (!trafficTypeCount.empty()) {
+            EV_INFO << "Traffic by Type:\n";
+            for (auto& [type, count] : trafficTypeCount) {
+                const char* name = (type==VIDEO?"Video":type==DATACENTER?"Datacenter":
+                                   type==GAMING?"Gaming":"IoT");
+                EV_INFO << "  " << name << ": " << count << "\n";
+            }
+        }
+        
+        // Record statistics
+        recordScalar("packetsReceived", packetsReceived);
+        recordScalar("packetsForwarded", packetsForwarded);
+        recordScalar("packetsDropped", packetsDropped);
     }
 };
 

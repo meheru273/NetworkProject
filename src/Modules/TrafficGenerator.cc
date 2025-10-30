@@ -34,8 +34,8 @@ protected:
             QoSParams qos;
             qos.type = trafficType;
             qos.priority = priority;
-                qos.bandwidth = par("bandwidth").doubleValue();
-                qos.ttl = par("ttl").intValue();
+            qos.bandwidth = par("bandwidth").doubleValue();
+            qos.ttl = par("ttl").intValue();
             qos.delay = 0;
             
             auto *pkt = mkData("DataPacket", addr, dstAddr, qos);
@@ -45,9 +45,8 @@ protected:
                     << (trafficType==VIDEO?"video":trafficType==DATACENTER?"datacenter":
                         trafficType==GAMING?"gaming":"iot")
                     << " packet #" << packetsSent << " to " << dstAddr 
-                    << " (priority=" << priority << ")\n";
+                    << " (priority=" << priority << ") at time " << simTime() << "\n";
             
-            // send via the declared 'ppp' gate in Network.ned
             send(pkt, "ppp$o");
             
             // Schedule next packet
@@ -61,6 +60,8 @@ protected:
 
     void finish() override {
         cancelAndDelete(sendEvent);
+        EV_INFO << "TrafficGenerator " << addr << " sent " << packetsSent << " packets\n";
+        recordScalar("packetsSent", packetsSent);
     }
 };
 
